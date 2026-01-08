@@ -4,6 +4,7 @@ import datetime
 from memory.db.memory_db import MemoryDB
 from memory.decay_engine import DecayEngine, ReinforcementEngine
 from memory.dimension_manager import DimensionManager
+from common.utils.health import HealthServicer
 from common.proto import kuro_pb2
 from common.proto import kuro_pb2_grpc
 from google.protobuf import struct_pb2
@@ -65,8 +66,9 @@ class MemoryServicer(kuro_pb2_grpc.MemoryServiceServicer):
 def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     kuro_pb2_grpc.add_MemoryServiceServicer_to_server(MemoryServicer(), server)
+    kuro_pb2_grpc.add_HealthServiceServicer_to_server(HealthServicer("Memory"), server)
     server.add_insecure_port('[::]:50053')
-    print("Memory Server starting on port 50053...")
+    print("Memory Substrate (VM 3) starting on port 50053...")
     server.start()
     server.wait_for_termination()
 

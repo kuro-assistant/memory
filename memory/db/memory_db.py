@@ -1,20 +1,30 @@
 import sqlite3
 import datetime
+import os
 
 class MemoryDB:
     """
     Persistent Memory Substrate using SQLite (WAL mode).
-    Handles Atomic Memory Units (AMUs) and behavioral dimensions.
+    Hardenened for Phase 3.5: Per-thread connection safety.
     """
     def __init__(self, db_path="memory/db/kuro_memory.db"):
-        self.conn = sqlite3.connect(db_path, check_same_thread=False)
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.create_tables()
+        self.db_path = db_path
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(self.db_path or "memory/db/"), exist_ok=True)
+        # Setup schema using a transient connection
+        with self.get_conn() as conn:
+            self._create_tables(conn)
 
-    def create_tables(self):
-        with self.conn:
+    def get_conn(self):
+        """ Returns a fresh, thread-local connection with WAL enabled. """
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("PRAGMA journal_mode=WAL")
+        return conn
+
+    def _create_tables(self, conn):
+        with conn:
             # Atomic Memory Units (AMUs)
-            self.conn.execute("""
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS memory_atoms (
                     id TEXT PRIMARY KEY,
                     entity_id TEXT,
@@ -28,7 +38,7 @@ class MemoryDB:
             """)
             
             # Behavioral Preferences (Math-based weights)
-            self.conn.execute("""
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS preferences (
                     key TEXT PRIMARY KEY,
                     value REAL,
@@ -38,7 +48,7 @@ class MemoryDB:
             """)
             
             # Entity Relations (Graph adjacency)
-            self.conn.execute("""
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS entity_relations (
                     from_entity TEXT,
                     relation TEXT,
@@ -50,40 +60,28 @@ class MemoryDB:
             """)
 
     def update_atom(self, entity_id, dimension, delta, context_hash, confidence=0.5):
-        """
-        Phase 2C: Implements saturation math and collision handling for AMUs.
-        """
         now = datetime.datetime.now()
-        with self.conn:
-            # 1. Anti-Collision & Saturation Math
-            # magnitude = tanh(old + new) to prevent runaway weights
-            self.conn.execute("""
-                INSERT INTO memory_atoms (id, entity_id, dimension, magnitude, context_hash, confidence, decay_rate, last_updated)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    magnitude = MAX(-1.0, MIN(1.0, magnitude + EXCLUDED.magnitude)),
-                    confidence = (confidence * 0.7) + (EXCLUDED.confidence * 0.3),
-                    last_updated = EXCLUDED.last_updated
-            """, (f"{entity_id}_{dimension}_{context_hash}", entity_id, dimension, delta, context_hash, confidence, 0.05, now))
-            
-            # 2. Hard Cap Enforcement (Phase 2C)
-            self._enforce_caps(entity_id, dimension)
+        with self.get_conn() as conn:
+            with conn:
+                conn.execute("""
+                    INSERT INTO memory_atoms (id, entity_id, dimension, magnitude, context_hash, confidence, decay_rate, last_updated)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        magnitude = MAX(-1.0, MIN(1.0, magnitude + EXCLUDED.magnitude)),
+                        confidence = (confidence * 0.7) + (EXCLUDED.confidence * 0.3),
+                        last_updated = EXCLUDED.last_updated
+                """, (f"{entity_id}_{dimension}_{context_hash}", entity_id, dimension, delta, context_hash, confidence, 0.05, now))
+                self._enforce_caps(conn, entity_id, dimension)
 
-    def _enforce_caps(self, entity_id, dimension, max_atoms=50):
-        """
-        Enforces a hard cap of 50 atoms per entity/dimension.
-        Uses confidence-weighted eviction if limit is exceeded.
-        """
-        cursor = self.conn.execute("""
+    def _enforce_caps(self, conn, entity_id, dimension, max_atoms=50):
+        cursor = conn.execute("""
             SELECT count(*) FROM memory_atoms 
             WHERE entity_id = ? AND dimension = ?
         """, (entity_id, dimension))
         count = cursor.fetchone()[0]
         
         if count > max_atoms:
-            # Evict the atom with lowest confidence-weighted utility
-            # Utility = confidence * (1 / (1 + age_in_hours))
-            self.conn.execute("""
+            conn.execute("""
                 DELETE FROM memory_atoms 
                 WHERE id = (
                     SELECT id FROM memory_atoms 
@@ -92,3 +90,19 @@ class MemoryDB:
                 )
             """, (entity_id, dimension))
             print(f"Memory: Cap reached for {dimension}. Evicting weakest atom.")
+
+    def get_memory_summaries(self, entities):
+        with self.get_conn() as conn:
+            summaries = []
+            for ent in entities:
+                cursor = conn.execute("SELECT dimension, magnitude FROM memory_atoms WHERE entity_id = ?", (ent,))
+                atoms = cursor.fetchall()
+                if atoms:
+                    sum_str = f"Entity: {ent} | " + ", ".join([f"{d}: {m:.2f}" for d, m in atoms])
+                    summaries.append(sum_str)
+            return summaries
+
+    def get_preferences(self):
+        with self.get_conn() as conn:
+            cursor = conn.execute("SELECT key, value FROM preferences")
+            return {row[0]: row[1] for row in cursor.fetchall()}

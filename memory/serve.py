@@ -2,7 +2,15 @@ import grpc
 import os
 import sys
 sys.path.append(os.getcwd())
+sys.stdout.reconfigure(line_buffering=True)
+import logging
 from concurrent import futures
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("Memory")
 import datetime
 from memory.db.memory_db import MemoryDB
 from memory.decay_engine import DecayEngine, ReinforcementEngine
@@ -70,7 +78,7 @@ def serve():
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     kuro_pb2_grpc.add_MemoryServiceServicer_to_server(MemoryServicer(), server)
     kuro_pb2_grpc.add_HealthServiceServicer_to_server(HealthServicer("Memory"), server)
-    server.add_insecure_port('[::]:50053')
+    server.add_insecure_port('0.0.0.0:50053')
     print("Memory Substrate (VM 3) starting on port 50053...")
     server.start()
     server.wait_for_termination()

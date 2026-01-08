@@ -1,4 +1,7 @@
 import grpc
+import os
+import sys
+sys.path.append(os.getcwd())
 from concurrent import futures
 import datetime
 from memory.db.memory_db import MemoryDB

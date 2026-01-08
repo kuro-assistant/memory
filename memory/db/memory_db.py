@@ -7,7 +7,7 @@ class MemoryDB:
     Handles Atomic Memory Units (AMUs) and behavioral dimensions.
     """
     def __init__(self, db_path="memory/db/kuro_memory.db"):
-        self.conn = sqlite3.connect(db_path)
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.create_tables()
 
